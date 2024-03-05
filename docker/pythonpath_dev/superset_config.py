@@ -22,11 +22,34 @@
 #
 import logging
 import os
+from superset.security import SupersetSecurityManager
+from flask_appbuilder.security.views import AuthDBView
+from flask import flash, redirect, request
+from redis import Redis
+from flask_appbuilder.security.views import AuthDBView
+from flask_appbuilder import expose
+from flask import flash, redirect, request, url_for
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 
 from celery.schedules import crontab
 from flask_caching.backends.filesystemcache import FileSystemCache
 
+
+
 logger = logging.getLogger()
+
+APP_ICON = "/static/assets/images/DN_Logo.svg"
+
+# Enable server-side sessions
+SESSION_TYPE = "redis"
+SESSION_REDIS = Redis(host='redis', port=6379, db=0, decode_responses=True)  # Use the Docker Compose service name as hostname
+SESSION_USE_SIGNER = True
+SESSION_PERMANENT = False
+SESSION_KEY_PREFIX = "superset_session:"
+# Ensure the SECRET_KEY is set
+SECRET_KEY = 'yLrUFVOicvzFondOKVyRpX+Z+xr3QtttWdzCtF05ONcpvor92zm5i6gW'  # Replace with your own secret key
 
 DATABASE_DIALECT = os.getenv("DATABASE_DIALECT")
 DATABASE_USER = os.getenv("DATABASE_USER")
@@ -106,10 +129,56 @@ SQLLAB_CTAS_NO_LIMIT = True
 #
 try:
     import superset_config_docker
-    from superset_config_docker import *  # noqa
 
+    from superset_config_docker import *  # noqa
     logger.info(
         f"Loaded your Docker configuration at " f"[{superset_config_docker.__file__}]"
     )
 except ImportError:
     logger.info("Using default Docker config...")
+
+
+    
+redis_conn = Redis(host='redis', port=6379, db=0, decode_responses=True)
+from flask import session
+
+class CustomAuthDBView(AuthDBView):
+    @expose('/login/', methods=['GET', 'POST'])
+    def login(self):
+        # This block is only executed for POST requests
+        if request.method == 'POST':
+            username = request.form.get('username')
+            user_key = f"logged_in_user:{username}"
+            if redis_conn.exists(user_key):
+                flash('You are already logged in from another browser.', 'warning')
+                # Redirect to the index page or another appropriate page
+                return redirect(url_for('SupersetIndexView.index'))
+            else:
+                # Set a flag in Redis that the user is logged in
+                redis_conn.set(user_key, "true", ex=3600)  # Expiration time of 1 hour
+                # Proceed with the normal login process
+                session['username'] = username
+                return super().login()
+        else:
+            # If not authenticated, proceed with the normal login process
+            return super().login()
+    
+    @expose('/logout/', methods=['GET', 'POST'])
+    def logout(self):
+        username = session.get('username')
+        if username:
+            user_key = f"logged_in_user:{username}"
+            # Delete the user's session key from Redis
+            redis_conn.delete(user_key)
+            flash('You have been successfully logged out.', 'info')
+            # Clear the username from the session
+            session.pop('username', None)
+        else:
+            flash('No active session found.', 'info')
+        # Proceed with the standard logout process
+        return super().logout()
+   
+class CustomSecurityManager(SupersetSecurityManager):
+    authdbview = CustomAuthDBView
+
+CUSTOM_SECURITY_MANAGER = CustomSecurityManager
