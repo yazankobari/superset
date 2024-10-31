@@ -361,7 +361,7 @@ class BigQueryEngineSpec(BaseEngineSpec):  # pylint: disable=too-many-public-met
                     {
                         "partitions": {
                             "cols": [partition_column],
-                            "latest": {"ds": max_partition_id},
+                            "latest": {partition_column: max_partition_id},
                             "partitionQuery": sql,
                         },
                         "indexes": [
