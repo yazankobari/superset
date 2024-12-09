@@ -91,9 +91,8 @@ interface Props {
   erroredFilters: string[];
 }
 
-const isFilterDivider = (id: string) => {
-  return id.startsWith('NATIVE_FILTER_DIVIDER') ? true : false;
-};
+const isFilterDivider = (id: string) =>
+  !!id.startsWith('NATIVE_FILTER_DIVIDER');
 
 const FilterTitleContainer = forwardRef<HTMLDivElement, Props>(
   (
