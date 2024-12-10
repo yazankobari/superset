@@ -116,9 +116,10 @@ def temporarily_disconnect_db():  # type: ignore
         is_feature_enabled("DISABLE_METADATA_DB_DURING_ANALYTICS")
         and pool_type == "NullPool"
     )
-    conn = db.session.connection()
+    conn = None
     try:
         if do_it:
+            conn = db.session.connection()
             logger.info("Disconnecting metadata database temporarily")
             # Closing the session
             db.session.close()
@@ -128,7 +129,8 @@ def temporarily_disconnect_db():  # type: ignore
     finally:
         if do_it:
             logger.info("Reconnecting to metadata database")
-            conn = db.session.connection()
+            if not conn:
+                conn = db.session.connection()
             # Creating a new scoped session
             # NOTE: Interface changes in flask-sqlalchemy ~3.0
             db.session = db.create_scoped_session()
