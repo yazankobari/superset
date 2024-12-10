@@ -129,7 +129,7 @@ def temporarily_disconnect_db():  # type: ignore
     finally:
         if do_it:
             logger.info("Reconnecting to metadata database")
-            if not conn:
+            if not conn or conn.closed:
                 conn = db.session.connection()
             # Creating a new scoped session
             # NOTE: Interface changes in flask-sqlalchemy ~3.0
