@@ -16,13 +16,13 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React from 'react';
+import { useState } from 'react';
 import userEvent from '@testing-library/user-event';
 import { render, screen, within } from 'spec/helpers/testing-library';
 import setupPlugins from 'src/setup/setupPlugins';
 import { getMockStoreWithNativeFilters } from 'spec/fixtures/mockStore';
 import chartQueries, { sliceId } from 'spec/fixtures/mockChartQueries';
-import { BinaryQueryObjectFilterClause } from '@superset-ui/core';
+import { BinaryQueryObjectFilterClause, VizType } from '@superset-ui/core';
 import { Menu } from 'src/components/Menu';
 import DrillDetailMenuItems, {
   DrillDetailMenuItemsProps,
@@ -46,12 +46,12 @@ const { id: defaultChartId, form_data: defaultFormData } =
 const { slice_name: chartName } = defaultFormData;
 const unsupportedChartFormData = {
   ...defaultFormData,
-  viz_type: 'dist_bar',
+  viz_type: VizType.DistBar,
 };
 
 const noDimensionsFormData = {
   ...defaultFormData,
-  viz_type: 'table',
+  viz_type: VizType.Table,
   query_mode: 'raw',
 };
 
@@ -69,6 +69,28 @@ const filterB: BinaryQueryObjectFilterClause = {
   formattedVal: 'Two days ago',
 };
 
+const MockRenderChart = ({
+  chartId,
+  formData,
+  isContextMenu,
+  filters,
+}: Partial<DrillDetailMenuItemsProps>) => {
+  const [showMenu, setShowMenu] = useState(false);
+
+  return (
+    <Menu>
+      <DrillDetailMenuItems
+        chartId={chartId ?? defaultChartId}
+        formData={formData ?? defaultFormData}
+        filters={filters}
+        isContextMenu={isContextMenu}
+        showModal={showMenu}
+        setShowModal={setShowMenu}
+      />
+    </Menu>
+  );
+};
+
 const renderMenu = ({
   chartId,
   formData,
@@ -77,14 +99,12 @@ const renderMenu = ({
 }: Partial<DrillDetailMenuItemsProps>) => {
   const store = getMockStoreWithNativeFilters();
   return render(
-    <Menu>
-      <DrillDetailMenuItems
-        chartId={chartId ?? defaultChartId}
-        formData={formData ?? defaultFormData}
-        filters={filters}
-        isContextMenu={isContextMenu}
-      />
-    </Menu>,
+    <MockRenderChart
+      chartId={chartId}
+      formData={formData}
+      isContextMenu={isContextMenu}
+      filters={filters}
+    />,
     { useRouter: true, useRedux: true, store },
   );
 };
@@ -285,11 +305,11 @@ test('context menu for supported chart, no dimensions, no filters', async () => 
     isContextMenu: true,
   });
 
-  await expectDrillToDetailDisabled(
-    'Drill to detail is disabled because this chart does not group data by dimension value.',
-  );
+  const message =
+    'Drill to detail is disabled because this chart does not group data by dimension value.';
 
-  await expectDrillToDetailByDisabled();
+  await expectDrillToDetailDisabled(message);
+  await expectDrillToDetailByDisabled(message);
 });
 
 test('context menu for supported chart, no dimensions, 1 filter', async () => {
@@ -299,11 +319,11 @@ test('context menu for supported chart, no dimensions, 1 filter', async () => {
     filters: [filterA],
   });
 
-  await expectDrillToDetailDisabled(
-    'Drill to detail is disabled because this chart does not group data by dimension value.',
-  );
+  const message =
+    'Drill to detail is disabled because this chart does not group data by dimension value.';
 
-  await expectDrillToDetailByDisabled();
+  await expectDrillToDetailDisabled(message);
+  await expectDrillToDetailByDisabled(message);
 });
 
 test('dropdown menu for supported chart, dimensions', async () => {

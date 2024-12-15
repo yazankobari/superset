@@ -16,19 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import {
-  ComparisonTimeRangeType,
-  t,
-  validateTimeComparisonRangeValues,
-} from '@superset-ui/core';
+import { t } from '@superset-ui/core';
 import {
   ControlPanelConfig,
-  ControlPanelState,
-  ControlState,
   getStandardizedControls,
   sharedControls,
+  sections,
 } from '@superset-ui/chart-controls';
 import { headerFontSize, subheaderFontSize } from '../sharedControls';
+import { ColorSchemeEnum } from './types';
 
 const config: ControlPanelConfig = {
   controlPanelSections: [
@@ -38,57 +34,6 @@ const config: ControlPanelConfig = {
       controlSetRows: [
         ['metric'],
         ['adhoc_filters'],
-        [
-          {
-            name: 'time_comparison',
-            config: {
-              type: 'SelectControl',
-              label: t('Range for Comparison'),
-              default: 'r',
-              choices: [
-                ['r', 'Inherit range from time filters'],
-                ['y', 'Year'],
-                ['m', 'Month'],
-                ['w', 'Week'],
-                ['c', 'Custom'],
-              ],
-              rerender: ['adhoc_custom'],
-              description: t(
-                'Set the time range that will be used for the comparison metrics. ' +
-                  'For example, "Year" will compare to the same dates one year earlier. ' +
-                  'Use "Inherit range from time filters" to shift the comparison time range' +
-                  'by the same length as your time range and use "Custom" to set a custom comparison range.',
-              ),
-            },
-          },
-        ],
-        [
-          {
-            name: `adhoc_custom`,
-            config: {
-              ...sharedControls.adhoc_filters,
-              label: t('Filters for Comparison'),
-              description:
-                'This only applies when selecting the Range for Comparison Type: Custom',
-              visibility: ({ controls }) =>
-                controls?.time_comparison?.value ===
-                ComparisonTimeRangeType.Custom,
-              mapStateToProps: (
-                state: ControlPanelState,
-                controlState: ControlState,
-              ) => ({
-                ...(sharedControls.adhoc_filters.mapStateToProps?.(
-                  state,
-                  controlState,
-                ) || {}),
-                externalValidationErrors: validateTimeComparisonRangeValues(
-                  state.controls?.time_comparison?.value,
-                  controlState.value,
-                ),
-              }),
-            },
-          },
-        ],
         [
           {
             name: 'row_limit',
@@ -102,6 +47,15 @@ const config: ControlPanelConfig = {
       expanded: true,
       controlSetRows: [
         ['y_axis_format'],
+        [
+          {
+            name: 'percentDifferenceFormat',
+            config: {
+              ...sharedControls.y_axis_format,
+              label: t('Percent Difference format'),
+            },
+          },
+        ],
         ['currency_format'],
         [
           {
@@ -131,8 +85,34 @@ const config: ControlPanelConfig = {
             },
           },
         ],
+        [
+          {
+            name: 'comparison_color_scheme',
+            config: {
+              type: 'SelectControl',
+              label: t('color scheme for comparison'),
+              default: ColorSchemeEnum.Green,
+              renderTrigger: true,
+              choices: [
+                [ColorSchemeEnum.Green, 'Green for increase, red for decrease'],
+                [ColorSchemeEnum.Red, 'Red for increase, green for decrease'],
+              ],
+              visibility: ({ controls }) =>
+                controls?.comparison_color_enabled?.value === true,
+              description: t(
+                'Adds color to the chart symbols based on the positive or ' +
+                  'negative change from the comparison value.',
+              ),
+            },
+          },
+        ],
       ],
     },
+    sections.timeComparisonControls({
+      multi: false,
+      showCalculationType: false,
+      showFullChoices: false,
+    }),
   ],
   controlOverrides: {
     y_axis_format: {

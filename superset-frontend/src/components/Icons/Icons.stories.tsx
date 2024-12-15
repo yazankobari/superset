@@ -16,7 +16,6 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React from 'react';
 import { styled, supersetTheme } from '@superset-ui/core';
 import Icons from '.';
 import IconType from './IconType';
@@ -45,10 +44,19 @@ const IconBlock = styled.div`
   flex-direction: column;
   align-items: center;
   padding: ${({ theme }) => theme.gridUnit * 2}px;
+
+  span {
+    margin-top: ${({ theme }) =>
+      2 * theme.gridUnit}px; // Add spacing between icon and name
+    font-size: ${({ theme }) =>
+      theme.typography.sizes.m}; // Optional: adjust font size for elegance
+    color: ${({ theme }) =>
+      theme.colors.grayscale.base}; // Optional: subtle color for the name
+  }
 `;
 
 export const InteractiveIcons = ({
-  showNames,
+  showNames = true,
   ...rest
 }: IconType & { showNames: boolean }) => (
   <IconSet>
@@ -57,7 +65,7 @@ export const InteractiveIcons = ({
       return (
         <IconBlock key={k}>
           <IconComponent {...rest} />
-          {showNames && k}
+          {showNames && <span>{k}</span>}
         </IconBlock>
       );
     })}
@@ -72,11 +80,13 @@ InteractiveIcons.argTypes = {
   },
   iconSize: {
     defaultValue: 'xl',
-    control: { type: 'inline-radio', options: ['s', 'l', 'm', 'xl', 'xxl'] },
+    control: { type: 'inline-radio' },
+    options: ['s', 'l', 'm', 'xl', 'xxl'],
   },
   iconColor: {
     defaultValue: null,
-    control: { type: 'select', options: palette },
+    control: { type: 'select' },
+    options: palette,
   },
   theme: {
     table: {

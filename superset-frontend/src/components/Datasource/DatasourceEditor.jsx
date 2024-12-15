@@ -17,13 +17,13 @@
  * under the License.
  */
 import rison from 'rison';
-import React, { useCallback } from 'react';
+import { PureComponent, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Radio } from 'src/components/Radio';
 import Card from 'src/components/Card';
 import Alert from 'src/components/Alert';
 import Badge from 'src/components/Badge';
-import shortid from 'shortid';
+import { nanoid } from 'nanoid';
 import {
   css,
   isFeatureEnabled,
@@ -34,6 +34,7 @@ import {
   SupersetClient,
   t,
   withTheme,
+  getClientErrorObject,
 } from '@superset-ui/core';
 import { Select, AsyncSelect, Row, Col } from 'src/components';
 import { FormLabel } from 'src/components/Form';
@@ -46,7 +47,6 @@ import Label from 'src/components/Label';
 import Loading from 'src/components/Loading';
 import TableSelector from 'src/components/TableSelector';
 import EditableTitle from 'src/components/EditableTitle';
-import { getClientErrorObject } from 'src/utils/getClientErrorObject';
 import CheckboxControl from 'src/explore/components/controls/CheckboxControl';
 import TextControl from 'src/explore/components/controls/TextControl';
 import TextAreaControl from 'src/explore/components/controls/TextAreaControl';
@@ -94,7 +94,7 @@ const StyledTableTabs = styled(Tabs)`
 `;
 
 const StyledBadge = styled(Badge)`
-  .ant-badge-count {
+  .antd5-badge-count {
     line-height: ${({ theme }) => theme.gridUnit * 4}px;
     height: ${({ theme }) => theme.gridUnit * 4}px;
     margin-left: ${({ theme }) => theme.gridUnit}px;
@@ -576,7 +576,7 @@ function OwnersSelector({ datasource, onChange }) {
   );
 }
 
-class DatasourceEditor extends React.PureComponent {
+class DatasourceEditor extends PureComponent {
   constructor(props) {
     super(props);
     this.state = {
@@ -718,7 +718,7 @@ class DatasourceEditor extends React.PureComponent {
       if (!currentCol) {
         // new column
         finalColumns.push({
-          id: shortid.generate(),
+          id: nanoid(),
           column_name: col.column_name,
           type: col.type,
           groupby: true,
@@ -758,6 +758,7 @@ class DatasourceEditor extends React.PureComponent {
       datasource_type: datasource.type || datasource.datasource_type,
       database_name:
         datasource.database.database_name || datasource.database.name,
+      catalog_name: datasource.catalog,
       schema_name: datasource.schema,
       table_name: datasource.table_name,
       normalize_columns: datasource.normalize_columns,
@@ -894,7 +895,8 @@ class DatasourceEditor extends React.PureComponent {
           fieldKey="default_endpoint"
           label={t('Default URL')}
           description={t(
-            'Default URL to redirect to when accessing from the dataset list page',
+            `Default URL to redirect to when accessing from the dataset list page.
+            Accepts relative URLs such as <span style=„white-space: nowrap;”>/superset/dashboard/{id}/</span>`,
           )}
           control={<TextControl controlId="default_endpoint" />}
         />
@@ -1085,12 +1087,17 @@ class DatasourceEditor extends React.PureComponent {
                   <Col xs={24} md={12}>
                     <Field
                       fieldKey="databaseSelector"
-                      label={t('virtual')}
+                      label={t('Virtual')}
                       control={
                         <div css={{ marginTop: 8 }}>
                           <DatabaseSelector
                             db={datasource?.database}
+                            catalog={datasource.catalog}
                             schema={datasource.schema}
+                            onCatalogChange={catalog =>
+                              this.state.isEditMode &&
+                              this.onDatasourcePropChange('catalog', catalog)
+                            }
                             onSchemaChange={schema =>
                               this.state.isEditMode &&
                               this.onDatasourcePropChange('schema', schema)
@@ -1164,9 +1171,16 @@ class DatasourceEditor extends React.PureComponent {
                         }}
                         dbId={datasource.database?.id}
                         handleError={this.props.addDangerToast}
+                        catalog={datasource.catalog}
                         schema={datasource.schema}
                         sqlLabMode={false}
                         tableValue={datasource.table_name}
+                        onCatalogChange={
+                          this.state.isEditMode
+                            ? catalog =>
+                                this.onDatasourcePropChange('catalog', catalog)
+                            : undefined
+                        }
                         onSchemaChange={
                           this.state.isEditMode
                             ? schema =>

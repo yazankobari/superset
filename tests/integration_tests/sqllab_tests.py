@@ -16,8 +16,8 @@
 # under the License.
 # isort:skip_file
 """Unit tests for Sql Lab"""
-import json
-from datetime import datetime
+
+from textwrap import dedent
 
 import pytest
 from celery.exceptions import SoftTimeLimitExceeded
@@ -25,15 +25,14 @@ from parameterized import parameterized
 from unittest import mock
 import prison
 
-from freezegun import freeze_time
 from superset import db, security_manager
-from superset.connectors.sqla.models import SqlaTable
+from superset.connectors.sqla.models import SqlaTable  # noqa: F401
 from superset.db_engine_specs import BaseEngineSpec
 from superset.db_engine_specs.hive import HiveEngineSpec
 from superset.db_engine_specs.presto import PrestoEngineSpec
 from superset.errors import ErrorLevel, SupersetError, SupersetErrorType
 from superset.exceptions import SupersetErrorException
-from superset.models.sql_lab import Query, SavedQuery
+from superset.models.sql_lab import Query
 from superset.result_set import SupersetResultSet
 from superset.sqllab.limiting_factor import LimitingFactor
 from superset.sql_lab import (
@@ -42,19 +41,24 @@ from superset.sql_lab import (
     apply_limit_if_exists,
 )
 from superset.sql_parse import CtasMethod
-from superset.utils.core import (
-    backend,
-    datetime_to_epoch,
-)
+from superset.utils.core import backend
+from superset.utils import json
+from superset.utils.json import datetime_to_epoch  # noqa: F401
 from superset.utils.database import get_example_database, get_main_database
 
-from .base_tests import SupersetTestCase
-from .conftest import CTAS_SCHEMA_NAME
-from tests.integration_tests.fixtures.birth_names_dashboard import (
-    load_birth_names_dashboard_with_slices,
-    load_birth_names_data,
+from tests.integration_tests.base_tests import SupersetTestCase
+from tests.integration_tests.conftest import CTAS_SCHEMA_NAME
+from tests.integration_tests.constants import (
+    ADMIN_USERNAME,
+    GAMMA_SQLLAB_NO_DATA_USERNAME,
+    GAMMA_SQLLAB_USERNAME,
+    GAMMA_USERNAME,
 )
-from tests.integration_tests.fixtures.users import create_gamma_sqllab_no_data
+from tests.integration_tests.fixtures.birth_names_dashboard import (
+    load_birth_names_dashboard_with_slices,  # noqa: F401
+    load_birth_names_data,  # noqa: F401
+)
+from tests.integration_tests.fixtures.users import create_gamma_sqllab_no_data  # noqa: F401
 
 QUERY_1 = "SELECT * FROM birth_names LIMIT 1"
 QUERY_2 = "SELECT * FROM NO_TABLE"
@@ -65,30 +69,27 @@ QUERY_3 = "SELECT * FROM birth_names LIMIT 10"
 class TestSqlLab(SupersetTestCase):
     """Testings for Sql Lab"""
 
-    @pytest.mark.usefixtures("load_birth_names_data")
     def run_some_queries(self):
         db.session.query(Query).delete()
-        db.session.commit()
         self.run_sql(QUERY_1, client_id="client_id_1", username="admin")
         self.run_sql(QUERY_2, client_id="client_id_2", username="admin")
         self.run_sql(QUERY_3, client_id="client_id_3", username="gamma_sqllab")
-        self.logout()
 
     def tearDown(self):
-        self.logout()
         db.session.query(Query).delete()
         db.session.commit()
         db.session.close()
+        super().tearDown()
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_sql_json(self):
         examples_db = get_example_database()
         engine_name = examples_db.db_engine_spec.engine_name
 
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         data = self.run_sql("SELECT * FROM birth_names LIMIT 10", "1")
-        self.assertLess(0, len(data["data"]))
+        assert 0 < len(data["data"])
 
         data = self.run_sql("SELECT * FROM nonexistent_table", "2")
         if backend() == "presto":
@@ -128,13 +129,17 @@ class TestSqlLab(SupersetTestCase):
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_sql_json_dml_disallowed(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         data = self.run_sql("DELETE FROM birth_names", "1")
         assert data == {
             "errors": [
                 {
-                    "message": "Only SELECT statements are allowed against this database.",
+                    "message": (
+                        "This database does not allow for DDL/DML, and the query "
+                        "could not be parsed to confirm it is a read-only query. Please "
+                        "contact your administrator for more assistance."
+                    ),
                     "error_type": SupersetErrorType.DML_NOT_ALLOWED_ERROR,
                     "level": ErrorLevel.ERROR,
                     "extra": {
@@ -148,34 +153,6 @@ class TestSqlLab(SupersetTestCase):
                 }
             ]
         }
-
-    @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
-    def test_sql_json_to_saved_query_info(self):
-        """
-        SQLLab: Test SQLLab query execution info propagation to saved queries
-        """
-        self.login("admin")
-
-        sql_statement = "SELECT * FROM birth_names LIMIT 10"
-        examples_db_id = get_example_database().id
-        saved_query = SavedQuery(db_id=examples_db_id, sql=sql_statement)
-        db.session.add(saved_query)
-        db.session.commit()
-
-        with freeze_time(datetime.now().isoformat(timespec="seconds")):
-            self.run_sql(sql_statement, "1", username="admin")
-            saved_query_ = (
-                db.session.query(SavedQuery)
-                .filter(
-                    SavedQuery.db_id == examples_db_id, SavedQuery.sql == sql_statement
-                )
-                .one_or_none()
-            )
-            assert saved_query_.rows is not None
-            assert saved_query_.last_run == datetime.now()
-        # Rollback changes
-        db.session.delete(saved_query_)
-        db.session.commit()
 
     @parameterized.expand([CtasMethod.TABLE, CtasMethod.VIEW])
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
@@ -192,7 +169,7 @@ class TestSqlLab(SupersetTestCase):
             old_allow_ctas = examples_db.allow_ctas
             examples_db.allow_ctas = True  # enable cta
 
-            self.login("admin")
+            self.login(ADMIN_USERNAME)
             tmp_table_name = f"test_target_{ctas_method.lower()}"
             self.run_sql(
                 "SELECT * FROM birth_names",
@@ -206,15 +183,15 @@ class TestSqlLab(SupersetTestCase):
             # assertions
             db.session.commit()
             examples_db = get_example_database()
-            with examples_db.get_sqla_engine_with_context() as engine:
+            with examples_db.get_sqla_engine() as engine:
                 data = engine.execute(
                     f"SELECT * FROM admin_database.{tmp_table_name}"
                 ).fetchall()
                 names_count = engine.execute(
-                    f"SELECT COUNT(*) FROM birth_names"
+                    f"SELECT COUNT(*) FROM birth_names"  # noqa: F541
                 ).first()
-                self.assertEqual(
-                    names_count[0], len(data)
+                assert names_count[0] == len(
+                    data
                 )  # SQL_MAX_ROW not applied due to the SQLLAB_CTAS_NO_LIMIT set to True
 
                 # cleanup
@@ -224,21 +201,21 @@ class TestSqlLab(SupersetTestCase):
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_multi_sql(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         multi_sql = """
         SELECT * FROM birth_names LIMIT 1;
         SELECT * FROM birth_names LIMIT 2;
         """
         data = self.run_sql(multi_sql, "2234")
-        self.assertLess(0, len(data["data"]))
+        assert 0 < len(data["data"])
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_explain(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         data = self.run_sql("EXPLAIN SELECT * FROM birth_names", "1")
-        self.assertLess(0, len(data["data"]))
+        assert 0 < len(data["data"])
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_sql_json_has_access(self):
@@ -254,23 +231,21 @@ class TestSqlLab(SupersetTestCase):
         data = self.run_sql(QUERY_1, "1", username="Gagarin")
         db.session.query(Query).delete()
         db.session.commit()
-        self.assertLess(0, len(data["data"]))
+        assert 0 < len(data["data"])
 
     def test_sqllab_has_access(self):
-        for username in ("admin", "gamma_sqllab"):
+        for username in (ADMIN_USERNAME, GAMMA_SQLLAB_USERNAME):
             self.login(username)
             for endpoint in ("/sqllab/", "/sqllab/history/"):
                 resp = self.client.get(endpoint)
-                self.assertEqual(200, resp.status_code)
-
-            self.logout()
+                assert 200 == resp.status_code
 
     def test_sqllab_no_access(self):
-        self.login("gamma")
+        self.login(GAMMA_USERNAME)
         for endpoint in ("/sqllab/", "/sqllab/history/"):
             resp = self.client.get(endpoint)
             # Redirects to the main page
-            self.assertEqual(302, resp.status_code)
+            assert 302 == resp.status_code
 
     def test_sql_json_schema_access(self):
         examples_db = get_example_database()
@@ -279,9 +254,15 @@ class TestSqlLab(SupersetTestCase):
             # sqlite doesn't support database creation
             return
 
+        catalog = examples_db.get_default_catalog()
         sqllab_test_db_schema_permission_view = (
             security_manager.add_permission_view_menu(
-                "schema_access", f"[{examples_db.name}].[{CTAS_SCHEMA_NAME}]"
+                "schema_access",
+                security_manager.get_schema_perm(
+                    examples_db.name,
+                    catalog,
+                    CTAS_SCHEMA_NAME,
+                ),
             )
         )
         schema_perm_role = security_manager.add_role("SchemaPermission")
@@ -292,7 +273,7 @@ class TestSqlLab(SupersetTestCase):
             "SchemaUser", ["SchemaPermission", "Gamma", "sql_lab"]
         )
 
-        with examples_db.get_sqla_engine_with_context() as engine:
+        with examples_db.get_sqla_engine() as engine:
             engine.execute(
                 f"CREATE TABLE IF NOT EXISTS {CTAS_SCHEMA_NAME}.test_table AS SELECT 1 as c1, 2 as c2"
             )
@@ -300,7 +281,7 @@ class TestSqlLab(SupersetTestCase):
         data = self.run_sql(
             f"SELECT * FROM {CTAS_SCHEMA_NAME}.test_table", "3", username="SchemaUser"
         )
-        self.assertEqual(1, len(data["data"]))
+        assert 1 == len(data["data"])
 
         data = self.run_sql(
             f"SELECT * FROM {CTAS_SCHEMA_NAME}.test_table",
@@ -308,7 +289,7 @@ class TestSqlLab(SupersetTestCase):
             username="SchemaUser",
             schema=CTAS_SCHEMA_NAME,
         )
-        self.assertEqual(1, len(data["data"]))
+        assert 1 == len(data["data"])
 
         # postgres needs a schema as a part of the table name.
         if db_backend == "mysql":
@@ -318,10 +299,10 @@ class TestSqlLab(SupersetTestCase):
                 username="SchemaUser",
                 schema=CTAS_SCHEMA_NAME,
             )
-            self.assertEqual(1, len(data["data"]))
+            assert 1 == len(data["data"])
 
         db.session.query(Query).delete()
-        with get_example_database().get_sqla_engine_with_context() as engine:
+        with get_example_database().get_sqla_engine() as engine:
             engine.execute(f"DROP TABLE IF EXISTS {CTAS_SCHEMA_NAME}.test_table")
         db.session.commit()
 
@@ -329,7 +310,7 @@ class TestSqlLab(SupersetTestCase):
         self.run_sql(
             "SELECT name as col, gender as col FROM birth_names LIMIT 10",
             client_id="2e2df3",
-            username="admin",
+            username=ADMIN_USERNAME,
             raise_on_error=True,
         )
 
@@ -338,97 +319,97 @@ class TestSqlLab(SupersetTestCase):
         data = [["a", 4, 4.0]]
         results = SupersetResultSet(data, cols, BaseEngineSpec)
 
-        self.assertEqual(len(data), results.size)
-        self.assertEqual(len(cols), len(results.columns))
+        assert len(data) == results.size
+        assert len(cols) == len(results.columns)
 
     def test_pa_conversion_tuple(self):
         cols = ["string_col", "int_col", "list_col", "float_col"]
         data = [("Text", 111, [123], 1.0)]
         results = SupersetResultSet(data, cols, BaseEngineSpec)
 
-        self.assertEqual(len(data), results.size)
-        self.assertEqual(len(cols), len(results.columns))
+        assert len(data) == results.size
+        assert len(cols) == len(results.columns)
 
     def test_pa_conversion_dict(self):
         cols = ["string_col", "dict_col", "int_col"]
         data = [["a", {"c1": 1, "c2": 2, "c3": 3}, 4]]
         results = SupersetResultSet(data, cols, BaseEngineSpec)
 
-        self.assertEqual(len(data), results.size)
-        self.assertEqual(len(cols), len(results.columns))
+        assert len(data) == results.size
+        assert len(cols) == len(results.columns)
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
     def test_sql_limit(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
         test_limit = 1
         data = self.run_sql("SELECT * FROM birth_names", client_id="sql_limit_1")
-        self.assertGreater(len(data["data"]), test_limit)
+        assert len(data["data"]) > test_limit
         data = self.run_sql(
             "SELECT * FROM birth_names", client_id="sql_limit_2", query_limit=test_limit
         )
-        self.assertEqual(len(data["data"]), test_limit)
+        assert len(data["data"]) == test_limit
 
         data = self.run_sql(
             f"SELECT * FROM birth_names LIMIT {test_limit}",
             client_id="sql_limit_3",
             query_limit=test_limit + 1,
         )
-        self.assertEqual(len(data["data"]), test_limit)
-        self.assertEqual(data["query"]["limitingFactor"], LimitingFactor.QUERY)
+        assert len(data["data"]) == test_limit
+        assert data["query"]["limitingFactor"] == LimitingFactor.QUERY
 
         data = self.run_sql(
             f"SELECT * FROM birth_names LIMIT {test_limit + 1}",
             client_id="sql_limit_4",
             query_limit=test_limit,
         )
-        self.assertEqual(len(data["data"]), test_limit)
-        self.assertEqual(data["query"]["limitingFactor"], LimitingFactor.DROPDOWN)
+        assert len(data["data"]) == test_limit
+        assert data["query"]["limitingFactor"] == LimitingFactor.DROPDOWN
 
         data = self.run_sql(
             f"SELECT * FROM birth_names LIMIT {test_limit}",
             client_id="sql_limit_5",
             query_limit=test_limit,
         )
-        self.assertEqual(len(data["data"]), test_limit)
-        self.assertEqual(
-            data["query"]["limitingFactor"], LimitingFactor.QUERY_AND_DROPDOWN
-        )
+        assert len(data["data"]) == test_limit
+        assert data["query"]["limitingFactor"] == LimitingFactor.QUERY_AND_DROPDOWN
 
         data = self.run_sql(
             "SELECT * FROM birth_names",
             client_id="sql_limit_6",
             query_limit=10000,
         )
-        self.assertEqual(len(data["data"]), 1200)
-        self.assertEqual(data["query"]["limitingFactor"], LimitingFactor.NOT_LIMITED)
+        assert len(data["data"]) == 1200
+        assert data["query"]["limitingFactor"] == LimitingFactor.NOT_LIMITED
 
         data = self.run_sql(
             "SELECT * FROM birth_names",
             client_id="sql_limit_7",
             query_limit=1200,
         )
-        self.assertEqual(len(data["data"]), 1200)
-        self.assertEqual(data["query"]["limitingFactor"], LimitingFactor.NOT_LIMITED)
+        assert len(data["data"]) == 1200
+        assert data["query"]["limitingFactor"] == LimitingFactor.NOT_LIMITED
 
+    @pytest.mark.usefixtures("load_birth_names_data")
     def test_query_api_filter(self) -> None:
         """
         Test query api without can_only_access_owned_queries perm added to
         Admin and make sure all queries show up.
         """
         self.run_some_queries()
-        self.login(username="admin")
+        self.login(ADMIN_USERNAME)
 
         url = "/api/v1/query/"
         data = self.get_json_resp(url)
         admin = security_manager.find_user("admin")
         gamma_sqllab = security_manager.find_user("gamma_sqllab")
-        self.assertEqual(3, len(data["result"]))
+        assert 3 == len(data["result"])
         user_queries = [
             result.get("user").get("first_name") for result in data["result"]
         ]
         assert admin.first_name in user_queries
         assert gamma_sqllab.first_name in user_queries
 
+    @pytest.mark.usefixtures("load_birth_names_data")
     def test_query_api_can_access_all_queries(self) -> None:
         """
         Test query api with can_access_all_queries perm added to
@@ -444,12 +425,11 @@ class TestSqlLab(SupersetTestCase):
         )
         db.session.commit()
 
-        # Test search_queries for Admin user
         self.run_some_queries()
-        self.login("gamma_sqllab")
+        self.login(GAMMA_SQLLAB_USERNAME)
         url = "/api/v1/query/"
         data = self.get_json_resp(url)
-        self.assertEqual(3, len(data["result"]))
+        assert 3 == len(data["result"])
 
         # Remove all_query_access from gamma sqllab
         all_queries_view = security_manager.find_permission_view_menu(
@@ -461,21 +441,73 @@ class TestSqlLab(SupersetTestCase):
 
         db.session.commit()
 
+    def test_query_api_can_access_sql_editor_id_associated_queries(self) -> None:
+        """
+        Test query api with sql_editor_id filter to
+        gamma and make sure sql editor associated queries show up.
+        """
+        self.login(GAMMA_SQLLAB_USERNAME)
+
+        # create a tab
+        data = {
+            "queryEditor": json.dumps(
+                {
+                    "title": "Untitled Query 1",
+                    "dbId": 1,
+                    "schema": None,
+                    "autorun": False,
+                    "sql": "SELECT ...",
+                    "queryLimit": 1000,
+                }
+            )
+        }
+        resp = self.get_json_resp("/tabstateview/", data=data)
+        tab_state_id = resp["id"]
+        # run a query in the created tab
+        self.run_sql(
+            "SELECT 1",
+            "client_id_1",
+            raise_on_error=True,
+            sql_editor_id=str(tab_state_id),
+        )
+        self.run_sql(
+            "SELECT 2",
+            "client_id_2",
+            raise_on_error=True,
+            sql_editor_id=str(tab_state_id),
+        )
+        # run an orphan query (no tab)
+        self.run_sql(
+            "SELECT 3",
+            "client_id_3",
+            raise_on_error=True,
+        )
+
+        arguments = {
+            "filters": [
+                {"col": "sql_editor_id", "opr": "eq", "value": str(tab_state_id)}
+            ]
+        }
+        url = f"/api/v1/query/?q={prison.dumps(arguments)}"
+        assert {"SELECT 1", "SELECT 2"} == {
+            r.get("sql") for r in self.get_json_resp(url)["result"]
+        }
+
+    @pytest.mark.usefixtures("load_birth_names_data")
     def test_query_admin_can_access_all_queries(self) -> None:
         """
         Test query api with all_query_access perm added to
         Admin and make sure only Admin queries show up. This is the default
         """
-        # Test search_queries for Admin user
         self.run_some_queries()
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         url = "/api/v1/query/"
         data = self.get_json_resp(url)
-        self.assertEqual(3, len(data["result"]))
+        assert 3 == len(data["result"])
 
     def test_api_database(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
         self.create_fake_db()
         get_example_database()
         get_main_database()
@@ -490,10 +522,9 @@ class TestSqlLab(SupersetTestCase):
         }
         url = f"api/v1/database/?q={prison.dumps(arguments)}"
 
-        self.assertEqual(
-            {"examples", "fake_db_100", "main"},
-            {r.get("database_name") for r in self.get_json_resp(url)["result"]},
-        )
+        assert {"examples", "fake_db_100", "main"} == {
+            r.get("database_name") for r in self.get_json_resp(url)["result"]
+        }
         self.delete_fake_db()
 
     @pytest.mark.usefixtures("load_birth_names_dashboard_with_slices")
@@ -503,7 +534,7 @@ class TestSqlLab(SupersetTestCase):
         clear=True,
     )
     def test_sql_json_parameter_error(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         data = self.run_sql(
             "SELECT * FROM birth_names WHERE state = '{{ state }}' LIMIT 10",
@@ -513,9 +544,9 @@ class TestSqlLab(SupersetTestCase):
         assert data["status"] == "success"
 
         data = self.run_sql(
-            "SELECT * FROM birth_names WHERE state = '{{ state }}' -- blabblah {{ extra1 }} {{fake.fn()}}\nLIMIT 10",
+            "SELECT * FROM birth_names WHERE state = '{{ state }}' -- blabblah {{ extra1 }}\nLIMIT 10",
             "3",
-            template_params=json.dumps({"state": "CA"}),
+            template_params=json.dumps({"state": "CA", "extra1": "comment"}),
         )
         assert data["status"] == "success"
 
@@ -543,7 +574,7 @@ class TestSqlLab(SupersetTestCase):
         clear=True,
     )
     def test_sql_json_parameter_authorized(self):
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         data = self.run_sql(
             "SELECT name FROM {{ table }} LIMIT 10",
@@ -560,7 +591,7 @@ class TestSqlLab(SupersetTestCase):
         clear=True,
     )
     def test_sql_json_parameter_forbidden(self):
-        self.login("gamma_sqllab_no_data")
+        self.login(GAMMA_SQLLAB_NO_DATA_USERNAME)
 
         data = self.run_sql(
             "SELECT name FROM {{ table }} LIMIT 10",
@@ -582,13 +613,14 @@ class TestSqlLab(SupersetTestCase):
         mock_get_query,
         mock_db,
     ):
-        sql = """
+        sql = dedent(
+            """
             -- comment
             SET @value = 42;
-            SELECT @value AS foo;
-            -- comment
+            SELECT /*+ hint */ @value AS foo;
         """
-        mock_db = mock.MagicMock()
+        )
+        mock_db = mock.MagicMock()  # noqa: F841
         mock_query = mock.MagicMock()
         mock_query.database.allow_run_async = False
         mock_cursor = mock.MagicMock()
@@ -610,14 +642,14 @@ class TestSqlLab(SupersetTestCase):
         mock_execute_sql_statement.assert_has_calls(
             [
                 mock.call(
-                    "SET @value = 42",
+                    "-- comment\nSET @value = 42",
                     mock_query,
                     mock_cursor,
                     None,
                     False,
                 ),
                 mock.call(
-                    "SELECT @value AS foo",
+                    "SELECT /*+ hint */ @value AS foo",
                     mock_query,
                     mock_cursor,
                     None,
@@ -632,12 +664,13 @@ class TestSqlLab(SupersetTestCase):
     def test_execute_sql_statements_no_results_backend(
         self, mock_execute_sql_statement, mock_get_query
     ):
-        sql = """
+        sql = dedent(
+            """
             -- comment
             SET @value = 42;
-            SELECT @value AS foo;
-            -- comment
+            SELECT /*+ hint */ @value AS foo;
         """
+        )
         mock_query = mock.MagicMock()
         mock_query.database.allow_run_async = True
         mock_cursor = mock.MagicMock()
@@ -684,13 +717,14 @@ class TestSqlLab(SupersetTestCase):
         mock_get_query,
         mock_db,
     ):
-        sql = """
+        sql = dedent(
+            """
             -- comment
             SET @value = 42;
-            SELECT @value AS foo;
-            -- comment
+            SELECT /*+ hint */ @value AS foo;
         """
-        mock_db = mock.MagicMock()
+        )
+        mock_db = mock.MagicMock()  # noqa: F841
         mock_query = mock.MagicMock()
         mock_query.database.allow_run_async = False
         mock_cursor = mock.MagicMock()
@@ -716,14 +750,14 @@ class TestSqlLab(SupersetTestCase):
         mock_execute_sql_statement.assert_has_calls(
             [
                 mock.call(
-                    "SET @value = 42",
+                    "-- comment\nSET @value = 42",
                     mock_query,
                     mock_cursor,
                     None,
                     False,
                 ),
                 mock.call(
-                    "SELECT @value AS foo",
+                    "SELECT /*+ hint */ @value AS foo",
                     mock_query,
                     mock_cursor,
                     None,
@@ -760,12 +794,13 @@ class TestSqlLab(SupersetTestCase):
 
         # try invalid CVAS
         mock_query.ctas_method = CtasMethod.VIEW
-        sql = """
+        sql = dedent(
+            """
             -- comment
             SET @value = 42;
-            SELECT @value AS foo;
-            -- comment
+            SELECT /*+ hint */ @value AS foo;
         """
+        )
         with pytest.raises(SupersetErrorException) as excinfo:
             execute_sql_statements(
                 query_id=1,
@@ -800,7 +835,7 @@ class TestSqlLab(SupersetTestCase):
         if examples_db.backend == "sqlite":
             return
 
-        self.login("admin")
+        self.login(ADMIN_USERNAME)
 
         with mock.patch.object(
             examples_db.db_engine_spec, "handle_cursor"

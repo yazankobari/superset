@@ -16,11 +16,17 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, { CSSProperties } from 'react';
+import {
+  CSSProperties,
+  HTMLAttributes,
+  MouseEventHandler,
+  ReactNode,
+} from 'react';
+
 import { Tag } from 'src/components';
 import { useTheme } from '@superset-ui/core';
 
-export type OnClickHandler = React.MouseEventHandler<HTMLElement>;
+export type OnClickHandler = MouseEventHandler<HTMLElement>;
 
 export type Type =
   | 'alert'
@@ -32,20 +38,28 @@ export type Type =
   | 'primary'
   | 'secondary';
 
-export interface LabelProps extends React.HTMLAttributes<HTMLSpanElement> {
+export interface LabelProps extends HTMLAttributes<HTMLSpanElement> {
   key?: string;
   className?: string;
   onClick?: OnClickHandler;
   type?: Type;
   style?: CSSProperties;
-  children?: React.ReactNode;
+  children?: ReactNode;
   role?: string;
+  monospace?: boolean;
 }
 
 export default function Label(props: LabelProps) {
   const theme = useTheme();
   const { colors, transitionTiming } = theme;
-  const { type = 'default', onClick, children, ...rest } = props;
+  const {
+    type = 'default',
+    monospace = false,
+    style,
+    onClick,
+    children,
+    ...rest
+  } = props;
   const {
     alert,
     primary,
@@ -83,36 +97,41 @@ export default function Label(props: LabelProps) {
     } else {
       baseColor = primary;
     }
-
     backgroundColor = baseColor.base;
     backgroundColorHover = onClick ? baseColor.dark1 : baseColor.base;
     borderColor = onClick ? baseColor.dark1 : 'transparent';
     borderColorHover = onClick ? baseColor.dark2 : 'transparent';
   }
+  const css = {
+    transition: `background-color ${transitionTiming}s`,
+    whiteSpace: 'nowrap',
+    cursor: onClick ? 'pointer' : 'default',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    backgroundColor,
+    borderColor,
+    borderRadius: 21,
+    padding: '0.35em 0.8em',
+    lineHeight: 1,
+    color,
+    maxWidth: '100%',
+    '&:hover': {
+      backgroundColor: backgroundColorHover,
+      borderColor: borderColorHover,
+      opacity: 1,
+    },
+  };
+  if (monospace) {
+    css['font-family'] = theme.typography.families.monospace;
+  }
 
   return (
     <Tag
       onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      style={style}
       {...rest}
-      css={{
-        transition: `background-color ${transitionTiming}s`,
-        whiteSpace: 'nowrap',
-        cursor: onClick ? 'pointer' : 'default',
-        overflow: 'hidden',
-        textOverflow: 'ellipsis',
-        backgroundColor,
-        borderColor,
-        borderRadius: 21,
-        padding: '0.35em 0.8em',
-        lineHeight: 1,
-        color,
-        maxWidth: '100%',
-        '&:hover': {
-          backgroundColor: backgroundColorHover,
-          borderColor: borderColorHover,
-          opacity: 1,
-        },
-      }}
+      css={css}
     >
       {children}
     </Tag>

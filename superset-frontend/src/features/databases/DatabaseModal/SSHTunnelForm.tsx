@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, { EventHandler, ChangeEvent, useState } from 'react';
+import { useState } from 'react';
 import { t, styled } from '@superset-ui/core';
 import { AntdForm, Col, Row } from 'src/components';
 import { Form, FormLabel } from 'src/components/Form';
@@ -24,14 +24,13 @@ import { Radio } from 'src/components/Radio';
 import { Input, TextArea } from 'src/components/Input';
 import { Input as AntdInput, Tooltip } from 'antd';
 import { EyeInvisibleOutlined, EyeOutlined } from '@ant-design/icons';
-import { DatabaseObject } from '../types';
+import { DatabaseObject, FieldPropTypes } from '../types';
 import { AuthType } from '.';
 
 const StyledDiv = styled.div`
   padding-top: ${({ theme }) => theme.gridUnit * 2}px;
   label {
     color: ${({ theme }) => theme.colors.grayscale.base};
-    text-transform: uppercase;
     margin-bottom: ${({ theme }) => theme.gridUnit * 2}px;
   }
 `;
@@ -54,9 +53,7 @@ const SSHTunnelForm = ({
   setSSHTunnelLoginMethod,
 }: {
   db: DatabaseObject | null;
-  onSSHTunnelParametersChange: EventHandler<
-    ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
-  >;
+  onSSHTunnelParametersChange: FieldPropTypes['changeMethods']['onSSHTunnelParametersChange'];
   setSSHTunnelLoginMethod: (method: AuthType) => void;
 }) => {
   const [usePassword, setUsePassword] = useState<AuthType>(AuthType.Password);
@@ -86,9 +83,9 @@ const SSHTunnelForm = ({
             </FormLabel>
             <Input
               name="server_port"
-              type="text"
               placeholder={t('22')}
-              value={db?.ssh_tunnel?.server_port || ''}
+              type="number"
+              value={db?.ssh_tunnel?.server_port}
               onChange={onSSHTunnelParametersChange}
               data-test="ssh-tunnel-server_port-input"
             />

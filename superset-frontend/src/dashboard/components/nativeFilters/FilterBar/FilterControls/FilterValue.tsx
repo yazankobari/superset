@@ -16,13 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import React, {
+import {
+  FC,
+  memo,
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+
 import {
   ChartDataResponseResult,
   Behavior,
@@ -35,6 +38,8 @@ import {
   styled,
   SuperChart,
   t,
+  ClientErrorObject,
+  getClientErrorObject,
 } from '@superset-ui/core';
 import { useDispatch, useSelector } from 'react-redux';
 import { isEqual, isEqualWith } from 'lodash';
@@ -43,10 +48,6 @@ import Loading from 'src/components/Loading';
 import BasicErrorAlert from 'src/components/ErrorMessage/BasicErrorAlert';
 import ErrorMessageWithStackTrace from 'src/components/ErrorMessage/ErrorMessageWithStackTrace';
 import { waitForAsyncData } from 'src/middleware/asyncEvent';
-import {
-  ClientErrorObject,
-  getClientErrorObject,
-} from 'src/utils/getClientErrorObject';
 import { FilterBarOrientation, RootState } from 'src/dashboard/types';
 import {
   onFiltersRefreshSuccess,
@@ -85,7 +86,7 @@ const useShouldFilterRefresh = () => {
   return !isDashboardRefreshing && isFilterRefreshing;
 };
 
-const FilterValue: React.FC<FilterControlProps> = ({
+const FilterValue: FC<FilterControlProps> = ({
   dataMaskSelected,
   filter,
   onFilterSelectionChange,
@@ -174,14 +175,13 @@ const FilterValue: React.FC<FilterControlProps> = ({
       setIsRefreshing(true);
       getChartDataRequest({
         formData: newFormData,
-        force: false,
+        force: shouldRefresh,
         ownState: filterOwnState,
       })
         .then(({ response, json }) => {
           if (isFeatureEnabled(FeatureFlag.GlobalAsyncQueries)) {
             // deal with getChartDataRequest transforming the response data
             const result = 'result' in json ? json.result[0] : json;
-
             if (response.status === 200) {
               setState([result]);
               handleFilterLoadFinish();
@@ -221,7 +221,7 @@ const FilterValue: React.FC<FilterControlProps> = ({
     datasetId,
     groupby,
     handleFilterLoadFinish,
-    JSON.stringify(filter),
+    filter,
     hasDataSource,
     isRefreshing,
     shouldRefresh,
@@ -343,4 +343,4 @@ const FilterValue: React.FC<FilterControlProps> = ({
     </StyledDiv>
   );
 };
-export default React.memo(FilterValue);
+export default memo(FilterValue);

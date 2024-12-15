@@ -45,13 +45,11 @@ from superset.db_engine_specs.presto import PrestoEngineSpec
 from superset.exceptions import SupersetException
 from superset.extensions import cache_manager
 from superset.models.sql_lab import Query
-from superset.sql_parse import ParsedQuery, Table
+from superset.sql_parse import Table
 from superset.superset_typing import ResultSetColumnType
 
 if TYPE_CHECKING:
     # prevent circular imports
-    from pyhive.hive import Cursor
-    from TCLIService.ttypes import TFetchOrientation
 
     from superset.models.core import Database
 
@@ -68,9 +66,8 @@ def upload_to_s3(filename: str, upload_prefix: str, table: Table) -> str:
     :returns: The S3 location of the table
     """
 
-    # pylint: disable=import-outside-toplevel
-    import boto3
-    from boto3.s3.transfer import TransferConfig
+    import boto3  # pylint: disable=all
+    from boto3.s3.transfer import TransferConfig  # pylint: disable=all
 
     bucket_path = current_app.config["CSV_TO_HIVE_UPLOAD_S3_BUCKET"]
 
@@ -207,7 +204,11 @@ class HiveEngineSpec(PrestoEngineSpec):
             if table_exists:
                 raise SupersetException("Table already exists")
         elif to_sql_kwargs["if_exists"] == "replace":
-            with cls.get_engine(database) as engine:
+            with cls.get_engine(
+                database,
+                catalog=table.catalog,
+                schema=table.schema,
+            ) as engine:
                 engine.execute(f"DROP TABLE IF EXISTS {str(table)}")
 
         def _get_hive_type(dtype: np.dtype[Any]) -> str:
@@ -229,7 +230,11 @@ class HiveEngineSpec(PrestoEngineSpec):
         ) as file:
             pq.write_table(pa.Table.from_pandas(df), where=file.name)
 
-            with cls.get_engine(database) as engine:
+            with cls.get_engine(
+                database,
+                catalog=table.catalog,
+                schema=table.schema,
+            ) as engine:
                 engine.execute(
                     text(
                         f"""
@@ -392,11 +397,11 @@ class HiveEngineSpec(PrestoEngineSpec):
                     # Wait for job id before logging things out
                     # this allows for prefixing all log lines and becoming
                     # searchable in something like Kibana
-                    for l in log_lines[last_log_line:]:
+                    for l in log_lines[last_log_line:]:  # noqa: E741
                         logger.info("Query %s: [%s] %s", str(query_id), str(job_id), l)
                     last_log_line = len(log_lines)
                 if needs_commit:
-                    db.session.commit()
+                    db.session.commit()  # pylint: disable=consider-using-transaction
             if sleep_interval := current_app.config.get("HIVE_POLL_INTERVAL"):
                 logger.warning(
                     "HIVE_POLL_INTERVAL is deprecated and will be removed in 3.0. Please use DB_POLL_INTERVAL_SECONDS instead"
@@ -412,24 +417,24 @@ class HiveEngineSpec(PrestoEngineSpec):
     def get_columns(
         cls,
         inspector: Inspector,
-        table_name: str,
-        schema: str | None,
+        table: Table,
         options: dict[str, Any] | None = None,
     ) -> list[ResultSetColumnType]:
-        return BaseEngineSpec.get_columns(inspector, table_name, schema, options)
+        return BaseEngineSpec.get_columns(inspector, table, options)
 
     @classmethod
-    def where_latest_partition(  # pylint: disable=too-many-arguments
+    def where_latest_partition(
         cls,
-        table_name: str,
-        schema: str | None,
         database: Database,
+        table: Table,
         query: Select,
         columns: list[ResultSetColumnType] | None = None,
     ) -> Select | None:
         try:
             col_names, values = cls.latest_partition(
-                table_name, schema, database, show_first=True
+                database,
+                table,
+                show_first=True,
             )
         except Exception:  # pylint: disable=broad-except
             # table is not partitioned
@@ -449,7 +454,10 @@ class HiveEngineSpec(PrestoEngineSpec):
 
     @classmethod
     def latest_sub_partition(  # type: ignore
-        cls, table_name: str, schema: str | None, database: Database, **kwargs: Any
+        cls,
+        database: Database,
+        table: Table,
+        **kwargs: Any,
     ) -> str:
         # TODO(bogdan): implement`
         pass
@@ -465,26 +473,26 @@ class HiveEngineSpec(PrestoEngineSpec):
         return None
 
     @classmethod
-    def _partition_query(  # pylint: disable=too-many-arguments
+    def _partition_query(  # pylint: disable=all
         cls,
-        table_name: str,
-        schema: str | None,
+        table: Table,
         indexes: list[dict[str, Any]],
         database: Database,
         limit: int = 0,
         order_by: list[tuple[str, bool]] | None = None,
         filters: dict[Any, Any] | None = None,
     ) -> str:
-        full_table_name = f"{schema}.{table_name}" if schema else table_name
+        full_table_name = (
+            f"{table.schema}.{table.table}" if table.schema else table.table
+        )
         return f"SHOW PARTITIONS {full_table_name}"
 
     @classmethod
-    def select_star(  # pylint: disable=too-many-arguments
+    def select_star(  # pylint: disable=all
         cls,
         database: Database,
-        table_name: str,
+        table: Table,
         engine: Engine,
-        schema: str | None = None,
         limit: int = 100,
         show_cols: bool = False,
         indent: bool = True,
@@ -493,9 +501,8 @@ class HiveEngineSpec(PrestoEngineSpec):
     ) -> str:
         return super(PrestoEngineSpec, cls).select_star(
             database,
-            table_name,
+            table,
             engine,
-            schema,
             limit,
             show_cols,
             indent,
@@ -505,7 +512,11 @@ class HiveEngineSpec(PrestoEngineSpec):
 
     @classmethod
     def get_url_for_impersonation(
-        cls, url: URL, impersonate_user: bool, username: str | None
+        cls,
+        url: URL,
+        impersonate_user: bool,
+        username: str | None,
+        access_token: str | None,
     ) -> URL:
         """
         Return a modified URL with the username set.
@@ -519,15 +530,18 @@ class HiveEngineSpec(PrestoEngineSpec):
         return url
 
     @classmethod
-    def update_impersonation_config(
+    def update_impersonation_config(  # pylint: disable=too-many-arguments
         cls,
+        database: Database,
         connect_args: dict[str, Any],
         uri: str,
         username: str | None,
+        access_token: str | None,
     ) -> None:
         """
         Update a configuration dictionary
         that can set the correct properties for impersonating users
+        :param database: the Database Object
         :param connect_args:
         :param uri: URI string
         :param impersonate_user: Flag indicating if impersonation is enabled
@@ -547,7 +561,10 @@ class HiveEngineSpec(PrestoEngineSpec):
 
     @staticmethod
     def execute(  # type: ignore
-        cursor, query: str, async_: bool = False
+        cursor,
+        query: str,
+        database: Database,
+        async_: bool = False,
     ):  # pylint: disable=arguments-differ
         kwargs = {"async": async_}
         cursor.execute(query, **kwargs)
@@ -580,15 +597,6 @@ class HiveEngineSpec(PrestoEngineSpec):
 
         # otherwise, return no function names to prevent errors
         return []
-
-    @classmethod
-    def is_readonly_query(cls, parsed_query: ParsedQuery) -> bool:
-        """Pessimistic readonly, 100% sure statement won't mutate anything"""
-        return (
-            super().is_readonly_query(parsed_query)
-            or parsed_query.is_set()
-            or parsed_query.is_show()
-        )
 
     @classmethod
     def has_implicit_cancel(cls) -> bool:

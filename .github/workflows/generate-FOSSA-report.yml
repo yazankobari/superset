@@ -4,10 +4,11 @@ on:
   push:
     branches:
       - "master"
+      - "[0-9].[0-9]*"
 
 jobs:
   config:
-    runs-on: "ubuntu-latest"
+    runs-on: "ubuntu-22.04"
     outputs:
       has-secrets: ${{ steps.check.outputs.has-secrets }}
     steps:
@@ -23,7 +24,7 @@ jobs:
     needs: config
     if: needs.config.outputs.has-secrets
     name: Generate Report
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     steps:
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
         uses: actions/checkout@v4
@@ -33,8 +34,8 @@ jobs:
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
-          java-version: '11'
+          distribution: "temurin"
+          java-version: "11"
       - name: Generate fossa report
         env:
           FOSSA_API_KEY: ${{ secrets.FOSSA_API_KEY }}
