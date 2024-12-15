@@ -24,14 +24,14 @@ import logging
 import os
 from superset.security import SupersetSecurityManager
 from flask_appbuilder.security.views import AuthDBView
-from flask import flash, redirect, request
+from flask import flash, redirect, request, g, url_for
 from redis import Redis
 from flask_appbuilder.security.views import AuthDBView
 from flask_appbuilder import expose
 from flask import flash, redirect, request, url_for
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
+from datetime import datetime, timedelta
 
 from celery.schedules import crontab
 from flask_caching.backends.filesystemcache import FileSystemCache
@@ -46,10 +46,111 @@ APP_ICON = "/static/assets/images/DN_Logo.svg"
 SESSION_TYPE = "redis"
 SESSION_REDIS = Redis(host='redis', port=6379, db=0, decode_responses=True)  # Use the Docker Compose service name as hostname
 SESSION_USE_SIGNER = True
-SESSION_PERMANENT = False
-SESSION_KEY_PREFIX = "superset_session:"
-# Ensure the SECRET_KEY is set
-SECRET_KEY = 'yLrUFVOicvzFondOKVyRpX+Z+xr3QtttWdzCtF05ONcpvor92zm5i6gW'  # Replace with your own secret key
+SESSION_PERMANENT = True  # This enables session lifetime configuration
+PERMANENT_SESSION_LIFETIME = timedelta(seconds=30)  # Session expires after 30 seconds of inactivity
+
+class SessionManager:
+    @staticmethod
+    def register_session(user_id):
+        session_key = f"user_session:{user_id}"
+        session_data = {
+            "user_id": user_id,
+            "login_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "last_activity": datetime.now().timestamp(),
+            "ip_address": request.remote_addr,
+            "user_agent": request.user_agent.string
+        }
+        SESSION_REDIS.hmset(session_key, session_data)
+        SESSION_REDIS.expire(session_key, int(PERMANENT_SESSION_LIFETIME.total_seconds()))
+
+    @staticmethod
+    def get_active_session(user_id):
+        session_key = f"user_session:{user_id}"
+        session_data = SESSION_REDIS.hgetall(session_key)
+        if session_data:
+            last_activity = float(session_data.get('last_activity', 0))
+            if datetime.now().timestamp() - last_activity > PERMANENT_SESSION_LIFETIME.total_seconds():
+                # Session has expired
+                SessionManager.clear_session(user_id)
+                return None
+            # Update last activity time
+            SESSION_REDIS.hset(session_key, "last_activity", datetime.now().timestamp())
+            SESSION_REDIS.expire(session_key, int(PERMANENT_SESSION_LIFETIME.total_seconds()))
+            return session_data
+        return None
+
+    @staticmethod
+    def get_session_info(user_id):
+        session_data = SessionManager.get_active_session(user_id)
+        if session_data:
+            return {
+                "ip_address": session_data.get("ip_address", "unknown"),
+                "login_time": session_data.get("login_time", "unknown"),
+                "user_agent": session_data.get("user_agent", "unknown")
+            }
+        return None
+
+    @staticmethod
+    def clear_session(user_id):
+        session_key = f"user_session:{user_id}"
+        SESSION_REDIS.delete(session_key)
+
+class CustomAuthDBView(AuthDBView):
+    login_template = "appbuilder/general/security/login_db.html"
+
+    def __init__(self):
+        super(CustomAuthDBView, self).__init__()
+        if not hasattr(self, 'form'):
+            from flask_appbuilder.security.forms import LoginForm_db
+            self.form = LoginForm_db
+    
+    @expose('/login/', methods=['GET', 'POST'])
+    def login(self):
+        if request.method == 'POST':
+            username = request.form.get('username')
+            
+            # First verify if user exists and check for existing session
+            user = self.appbuilder.sm.find_user(username=username)
+            if user:
+                active_session = SessionManager.get_active_session(user.id)
+                if active_session:
+                    session_info = SessionManager.get_session_info(user.id)
+                    flash(
+                        f'Account already logged in from {session_info["ip_address"]} '
+                        f'since {session_info["login_time"]}. Please log out from there first.',
+                        'warning'
+                    )
+                    form = self.form()
+                    form.username.data = username
+                    return self.render_template(
+                        self.login_template,
+                        title=self.title,
+                        form=form,
+                        appbuilder=self.appbuilder,
+                    )
+            
+            # If no existing session, proceed with normal login
+            response = super().login()
+            
+            # Only register session if login was successful and user is authenticated
+            if response.status_code == 302 and hasattr(g, 'user') and g.user.is_authenticated:
+                SessionManager.register_session(g.user.id)
+            
+            return response
+                
+        return super().login()
+
+    @expose('/logout/', methods=['GET'])
+    def logout(self):
+        # Only clear session if user is authenticated
+        if hasattr(g, 'user') and g.user.is_authenticated:
+            SessionManager.clear_session(g.user.id)
+        return super().logout()
+
+class CustomSecurityManager(SupersetSecurityManager):
+    authdbview = CustomAuthDBView
+
+CUSTOM_SECURITY_MANAGER = CustomSecurityManager
 
 DATABASE_DIALECT = os.getenv("DATABASE_DIALECT")
 DATABASE_USER = os.getenv("DATABASE_USER")
@@ -136,49 +237,3 @@ try:
     )
 except ImportError:
     logger.info("Using default Docker config...")
-
-
-    
-redis_conn = Redis(host='redis', port=6379, db=0, decode_responses=True)
-from flask import session
-
-class CustomAuthDBView(AuthDBView):
-    @expose('/login/', methods=['GET', 'POST'])
-    def login(self):
-        # This block is only executed for POST requests
-        if request.method == 'POST':
-            username = request.form.get('username')
-            user_key = f"logged_in_user:{username}"
-            if redis_conn.exists(user_key):
-                flash('You are already logged in from another browser.', 'warning')
-                # Redirect to the index page or another appropriate page
-                return redirect(url_for('SupersetIndexView.index'))
-            else:
-                # Set a flag in Redis that the user is logged in
-                redis_conn.set(user_key, "true", ex=3600)  # Expiration time of 1 hour
-                # Proceed with the normal login process
-                session['username'] = username
-                return super().login()
-        else:
-            # If not authenticated, proceed with the normal login process
-            return super().login()
-    
-    @expose('/logout/', methods=['GET', 'POST'])
-    def logout(self):
-        username = session.get('username')
-        if username:
-            user_key = f"logged_in_user:{username}"
-            # Delete the user's session key from Redis
-            redis_conn.delete(user_key)
-            flash('You have been successfully logged out.', 'info')
-            # Clear the username from the session
-            session.pop('username', None)
-        else:
-            flash('No active session found.', 'info')
-        # Proceed with the standard logout process
-        return super().logout()
-   
-class CustomSecurityManager(SupersetSecurityManager):
-    authdbview = CustomAuthDBView
-
-CUSTOM_SECURITY_MANAGER = CustomSecurityManager
