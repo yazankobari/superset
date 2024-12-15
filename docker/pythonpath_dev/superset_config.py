@@ -24,7 +24,7 @@ import logging
 import os
 from superset.security import SupersetSecurityManager
 from flask_appbuilder.security.views import AuthDBView
-from flask import flash, redirect, request, g, url_for
+from flask import flash, redirect, request, g, url_for, session
 from redis import Redis
 from flask_appbuilder.security.views import AuthDBView
 from flask_appbuilder import expose
@@ -36,7 +36,7 @@ from datetime import datetime, timedelta
 from celery.schedules import crontab
 from flask_caching.backends.filesystemcache import FileSystemCache
 
-
+from functools import wraps
 
 logger = logging.getLogger()
 
@@ -47,11 +47,33 @@ SESSION_TYPE = "redis"
 SESSION_REDIS = Redis(host='redis', port=6379, db=0, decode_responses=True)  # Use the Docker Compose service name as hostname
 SESSION_USE_SIGNER = True
 SESSION_PERMANENT = True  # This enables session lifetime configuration
-PERMANENT_SESSION_LIFETIME = timedelta(seconds=30)  # Session expires after 30 seconds of inactivity
+PERMANENT_SESSION_LIFETIME = timedelta(minutes=20)  # Session expires after 20 minutes of inactivity
+
+def check_session_validity():
+    """Check if the current session is valid"""
+    if hasattr(g, 'user') and g.user.is_authenticated:
+        active_session = SessionManager.get_active_session(g.user.id)
+        if not active_session:
+            # Session has expired, clear Flask session and force logout
+            session.clear()
+            return False
+    return True
+
+# Create a before_request handler to check session validity
+def before_request():
+    # Skip session check for login/logout endpoints
+    if request.endpoint in ['AuthDBView.login', 'CustomAuthDBView.login', 'AuthDBView.logout', 'CustomAuthDBView.logout']:
+        return None
+        
+    if not check_session_validity():
+        flash('Your session has expired. Please log in again.', 'warning')
+        return redirect(url_for('CustomAuthDBView.login'))
 
 class SessionManager:
     @staticmethod
     def register_session(user_id):
+        # Clear any existing sessions first
+        SessionManager.clear_session(user_id)
         session_key = f"user_session:{user_id}"
         session_data = {
             "user_id": user_id,
@@ -142,13 +164,16 @@ class CustomAuthDBView(AuthDBView):
 
     @expose('/logout/', methods=['GET'])
     def logout(self):
-        # Only clear session if user is authenticated
         if hasattr(g, 'user') and g.user.is_authenticated:
             SessionManager.clear_session(g.user.id)
         return super().logout()
 
 class CustomSecurityManager(SupersetSecurityManager):
     authdbview = CustomAuthDBView
+    
+    def __init__(self, appbuilder):
+        super(CustomSecurityManager, self).__init__(appbuilder)
+        self.appbuilder.app.before_request(before_request)
 
 CUSTOM_SECURITY_MANAGER = CustomSecurityManager
 
